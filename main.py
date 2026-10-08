@@ -93,3 +93,9 @@ def trigger_supply_chain_scan(payload: NewsScanRequest):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Agent execution failed: {str(e)}")
+
+@app.on_event("startup")
+def startup_event():
+    # Execute table creation and default seed script on server startup
+    from engine.agent import init_db
+    init_db()

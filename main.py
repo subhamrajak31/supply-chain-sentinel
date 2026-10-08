@@ -1,7 +1,7 @@
 import os
 import sqlite3
 from typing import List, Optional, Dict, Any
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from engine.agent import sentinel_agent, DB_PATH
 
@@ -11,18 +11,49 @@ app = FastAPI(
     version="1.0.0"
 )
 
+def init_sqlite_db():
+    """Ensures SQLite database, directory, and tables exist with seed data on startup."""
+    db_dir = os.path.dirname(DB_PATH)
+    if db_dir and not os.path.exists(db_dir):
+        os.makedirs(db_dir, exist_ok=True)
+        
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS active_orders (
+            order_id INTEGER PRIMARY KEY,
+            item_name TEXT NOT NULL,
+            quantity INTEGER NOT NULL,
+            supplier_name TEXT NOT NULL,
+            origin_country TEXT NOT NULL,
+            expected_delivery TEXT NOT NULL
+        )
+    ''')
+    
+    cursor.execute("SELECT COUNT(*) FROM active_orders")
+    if cursor.fetchone()[0] == 0:
+        seed_data = [
+            (101, "Microcontroller Board A1", 5000, "Taiwan Semi Co", "Taiwan", "2026-10-15"),
+            (102, "Precision Steel Bearings", 12000, "RheinMetall Precision", "Germany", "2026-10-20"),
+            (103, "Lithium Battery Cells", 800, "Tokyo Battery Corp", "Japan", "2026-11-01")
+        ]
+        cursor.executemany('''
+            INSERT INTO active_orders (order_id, item_name, quantity, supplier_name, origin_country, expected_delivery)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', seed_data)
+        conn.commit()
+    conn.close()
+
+@app.on_event("startup")
+def startup_event():
+    init_sqlite_db()
+
 # Request / Response Schemas
 class NewsScanRequest(BaseModel):
     title: str
     link: Optional[str] = "https://news.google.com"
     published: Optional[str] = "Today"
-
-class OrderItem(BaseModel):
-    order_id: int
-    item_name: str
-    quantity: int
-    supplier_name: str
-    expected_delivery: str
 
 class ScanResultResponse(BaseModel):
     news_title: str
@@ -43,10 +74,7 @@ def read_root():
 
 @app.get("/api/health")
 def health_check():
-    # Verify SQLite DB connection
-    if not os.path.exists(DB_PATH):
-        raise HTTPException(status_code=500, detail="Database file not found.")
-    
+    init_sqlite_db()
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("SELECT COUNT(*) FROM active_orders")
@@ -61,10 +89,7 @@ def health_check():
 
 @app.post("/api/scan", response_model=ScanResultResponse)
 def trigger_supply_chain_scan(payload: NewsScanRequest):
-    """
-    Triggers the autonomous LangGraph Sentinel Agent against an incoming news article.
-    Returns threat assessment, impacted active orders, and executive alert.
-    """
+    init_sqlite_db()
     initial_state = {
         "news_article": {
             "title": payload.title,
@@ -79,7 +104,6 @@ def trigger_supply_chain_scan(payload: NewsScanRequest):
     }
 
     try:
-        # Run agent workflow
         output = sentinel_agent.invoke(initial_state)
 
         return ScanResultResponse(
@@ -93,9 +117,3 @@ def trigger_supply_chain_scan(payload: NewsScanRequest):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Agent execution failed: {str(e)}")
-
-@app.on_event("startup")
-def startup_event():
-    # Execute table creation and default seed script on server startup
-    from engine.agent import init_db
-    init_db()

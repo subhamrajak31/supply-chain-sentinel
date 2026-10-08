@@ -62,7 +62,7 @@ if st.button("🚀 Trigger Autonomous Risk Scan", type="primary"):
         with st.spinner("Sentinel Agent assessing risk, cross-referencing inventory, and formulating mitigation strategies..."):
             try:
                 payload = {"title": headline, "link": "https://news.google.com", "published": "Today"}
-                response = requests.post(f"{api_base_url}/api/scan", json=payload, timeout=25)
+                response = requests.post(f"{api_base_url}/api/scan", json=payload, timeout=120)
                 
                 if response.status_code == 200:
                     data = response.json()
